@@ -1,7 +1,7 @@
 import copy
 import math
+from PIL import ImageOps
 from torchvision import datasets, transforms
-from torchvision.transforms import ImageOps
 from torch.utils.data import ConcatDataset
 
 
