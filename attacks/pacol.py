@@ -161,46 +161,49 @@ class PACOL:
         """
         Run Algorithm 1 and return adversarial inputs X^adv_{τ+n}.
 
-        Processes nontarget samples in mini-batches of `craft_batch_size`.
-        The Adam optimizer and model state are shared across mini-batches so
-        the model evolves continuously. This avoids building a computation
-        graph over the full poison set at once (which causes GPU memory
-        pressure with CNNs and create_graph=True).
+        Structure faithful to Algorithm 1:
+          - Target label-flip data is sampled once before the K outer loop.
+          - The K outer loop wraps the mini-batch iteration so the model
+            evolves exactly K times (one Adam step per outer iteration),
+            not K × num_batches times as in the old per-batch structure.
+          - Inner PGD sweeps all non-target mini-batches per outer iteration.
         """
         model  = copy.deepcopy(self.model_orig).to(self.device)
         model.train()
 
-        x_orig = nontarget_x.clone()   # CPU; sliced per mini-batch
+        x_orig = nontarget_x.clone()   # CPU; reference for ε-ball projection
         x_adv  = nontarget_x.clone()   # output accumulator (CPU)
 
         opt    = torch.optim.Adam(model.parameters(), lr=self.lr)
         params = list(model.parameters())
         n      = len(nontarget_x)
 
-        for batch_start in range(0, n, craft_batch_size):
-            batch_end = min(batch_start + craft_batch_size, n)
-            bs = batch_end - batch_start
+        # Sample target (label-flipped) data once — held fixed across all K steps.
+        # A batch of craft_batch_size samples gives a stable gradient signal.
+        n_target = min(craft_batch_size, len(target_data))
+        x_t, y_t_adv = create_label_flip_poison(
+            target_data,
+            n_poison=n_target,
+            num_classes=self.num_classes,
+            seed=seed,
+        )
+        x_t     = x_t.to(self.device)
+        y_t_adv = y_t_adv.to(self.device)
 
-            xb_adv  = x_adv[batch_start:batch_end].to(self.device)
-            xb_orig = x_orig[batch_start:batch_end].to(self.device)
-            yb_nt   = nontarget_y[batch_start:batch_end].to(self.device)
+        for k in range(self.K):
+            # ── Label-flipped gradient (once per outer iteration) ──────────
+            model.zero_grad()
+            loss_lf = F.cross_entropy(model(x_t), y_t_adv)
+            grad_lf = _flat_grad(loss_lf, params, create_graph=False).detach()
 
-            x_t, y_t_adv = create_label_flip_poison(
-                target_data,
-                n_poison=bs,
-                num_classes=self.num_classes,
-                seed=seed + batch_start,
-            )
-            x_t     = x_t.to(self.device)
-            y_t_adv = y_t_adv.to(self.device)
+            # ── Inner PGD: sweep all non-target mini-batches ───────────────
+            for batch_start in range(0, n, craft_batch_size):
+                batch_end = min(batch_start + craft_batch_size, n)
 
-            for _ in range(self.K):
-                # ── Label-flipped gradient ────────────────────────────────
-                model.zero_grad()
-                loss_lf = F.cross_entropy(model(x_t), y_t_adv)
-                grad_lf = _flat_grad(loss_lf, params, create_graph=False).detach()
+                xb_adv  = x_adv[batch_start:batch_end].to(self.device)
+                xb_orig = x_orig[batch_start:batch_end].to(self.device)
+                yb_nt   = nontarget_y[batch_start:batch_end].to(self.device)
 
-                # ── Inner PGD loop ────────────────────────────────────────
                 for _ in range(self.S):
                     xb_adv = xb_adv.detach().requires_grad_(True)
 
@@ -219,13 +222,18 @@ class PACOL:
                         xb_adv = pgd_step(xb_adv, xb_orig, grad_X,
                                           self.alpha, self.epsilon, x_min, x_max)
 
-                # ── Outer model update ────────────────────────────────────
-                opt.zero_grad()
-                loss_step = F.cross_entropy(model(xb_adv.detach()), yb_nt)
-                loss_step.backward()
-                opt.step()
+                x_adv[batch_start:batch_end] = xb_adv.detach().cpu()
 
-            x_adv[batch_start:batch_end] = xb_adv.detach().cpu()
+            # ── One model update per outer iteration (Algorithm 1 step 11) ─
+            # Uses the first mini-batch of the now-updated adversarial data.
+            mb_end = min(craft_batch_size, n)
+            xb_update = x_adv[:mb_end].to(self.device)
+            yb_update = nontarget_y[:mb_end].to(self.device)
+
+            opt.zero_grad()
+            loss_step = F.cross_entropy(model(xb_update.detach()), yb_update)
+            loss_step.backward()
+            opt.step()
 
         return x_adv
 

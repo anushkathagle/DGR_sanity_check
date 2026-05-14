@@ -19,6 +19,8 @@ Usage
 -----
     python run_pacol_experiment.py --attack clean --runs 3
     python run_pacol_experiment.py --attack white --ratio 0.03 --runs 3
+    python run_pacol_experiment.py --attack gray  --ratio 0.03 --runs 3
+    python run_pacol_experiment.py --attack black --ratio 0.03 --runs 3
 """
 
 import argparse
@@ -112,8 +114,26 @@ def single_run(attack, ratio, train_datasets, test_datasets, seed):
         aux_data = torch.utils.data.Subset(target_dataset, aux_idx)
 
         if attack == 'white':
+            # White-box: attacker uses the CL solver.  The model_orig is updated
+            # to θ_{τ+n−1} inside train.py just before craft_poison is called
+            # for each non-target task, so we pass the initial model here as a
+            # placeholder — it will be replaced before first use.
             atk_model = copy.deepcopy(scholar.solver).to(DEVICE)
+
+        elif attack == 'gray':
+            # Gray-box: same architecture as the solver, trained on auxiliary
+            # target-task data (adversary has no access to the CL model).
+            atk_model = CNN(
+                image_size=DATASET_CONFIGS['rmnist']['size'],
+                image_channel_size=DATASET_CONFIGS['rmnist']['channels'],
+                classes=DATASET_CONFIGS['rmnist']['classes'],
+                depth=5, channel_size=1024, reducing_layers=3,
+            ).to(DEVICE)
+            utils.gaussian_intiailize(atk_model, std=0.02)
+            atk_model = train_surrogate(atk_model, aux_data, DEVICE)
+
         elif attack == 'black':
+            # Black-box: different (smaller) architecture, trained on auxiliary data.
             atk_model = CNN(
                 image_size=DATASET_CONFIGS['rmnist']['size'],
                 image_channel_size=DATASET_CONFIGS['rmnist']['channels'],
@@ -133,7 +153,8 @@ def single_run(attack, ratio, train_datasets, test_datasets, seed):
         replay_mode='generative-replay',
         generator_iterations=GEN_ITERS,
         solver_iterations=CLS_ITERS,
-        importance_of_new_task=0.5,
+        importance_of_new_task=0.5,   # used only for task 1 (dynamic takes over after)
+        dynamic_importance=True,      # Bug 5 fix: use r=1/τ schedule (DGR paper eq. 2)
         batch_size=BATCH_SIZE,
         lr=LR, beta1=0.5, beta2=0.9,
         loss_log_interval=500,
@@ -174,7 +195,7 @@ def run_experiment(attack, ratio, n_runs=3):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--attack',  default='clean', choices=['clean', 'white', 'black'])
+    parser.add_argument('--attack',  default='clean', choices=['clean', 'white', 'gray', 'black'])
     parser.add_argument('--ratio',   default=0.03, type=float)
     parser.add_argument('--runs',    default=3,    type=int)
     args = parser.parse_args()

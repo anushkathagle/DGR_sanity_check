@@ -14,6 +14,7 @@ def train(scholar, train_datasets, test_datasets, replay_mode,
           generator_iterations=8000,
           solver_iterations=5000,
           importance_of_new_task=.5,
+          dynamic_importance=False,
           batch_size=32,
           test_size=1024,
           sample_size=36,
@@ -60,15 +61,25 @@ def train(scholar, train_datasets, test_datasets, replay_mode,
     previous_datasets = None
 
     for task, train_dataset in enumerate(train_datasets, 1):
+        # DGR paper uses r = 1/τ; fall back to the fixed value when not requested.
+        task_importance = (1.0 / task) if dynamic_importance else importance_of_new_task
+
         # PACOL injection: poison non-target tasks before training
         if pacol_attacker is not None and nontarget_task_ids and task in nontarget_task_ids:
+            # Bug 1 fix: sync attacker model to current CL solver state (θ_{τ+n−1}).
+            # The paper requires θ at the time of the attack, not the initial weights.
+            pacol_attacker.model_orig = copy.deepcopy(scholar.solver).to(pacol_attacker.device)
+
             n_poison = max(1, int(len(train_dataset) * poison_ratio))
             rng = np.random.default_rng(seed + task)
             nt_idx = rng.choice(len(train_dataset), n_poison, replace=False)
             nt_x = torch.stack([train_dataset[int(i)][0] for i in nt_idx])
             nt_y = torch.tensor([train_dataset[int(i)][1] for i in nt_idx])
             print(f'  [task {task}] crafting {n_poison} poison samples...', flush=True)
-            adv_x = pacol_attacker.craft_poison(target_dataset, nt_x, nt_y, seed=seed + task)
+            adv_x = pacol_attacker.craft_poison(
+                target_dataset, nt_x, nt_y, seed=seed + task,
+                x_min=0.0, x_max=1.0,  # Bug 2 fix: clip to valid pixel range [0,1]
+            )
             train_dataset = _inject_poison(train_dataset, adv_x, nt_idx)
             print(f'  [task {task}] poison injected, training...', flush=True)
 
@@ -105,7 +116,7 @@ def train(scholar, train_datasets, test_datasets, replay_mode,
             train_dataset,
             scholar=previous_scholar,
             previous_datasets=previous_datasets,
-            importance_of_new_task=importance_of_new_task,
+            importance_of_new_task=task_importance,
             batch_size=batch_size,
             generator_iterations=generator_iterations,
             generator_training_callbacks=generator_training_callbacks,
