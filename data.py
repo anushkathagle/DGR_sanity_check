@@ -5,6 +5,9 @@ from torchvision.transforms import ImageOps
 from torch.utils.data import ConcatDataset
 
 
+
+ROTATION_ANGLES = [0, 45, 90, 135, 180]   # standard R-MNIST benchmark (PACOL paper)
+
 def _permutate_image_pixels(image, permutation):
     if permutation is None:
         return image
@@ -112,11 +115,33 @@ TEST_DATASETS = {
 }
 
 
+
+def get_rotated_mnist_tasks(train=True, capacity=None):
+    """Return a list of 5 datasets, one per rotation angle (R-MNIST)."""
+    base = datasets.MNIST(
+        './datasets/mnist', train=train, download=True,
+        transform=transforms.Compose(_MNIST_TRAIN_TRANSFORMS),
+    )
+    task_datasets = []
+    for angle in ROTATION_ANGLES:
+        ds = copy.deepcopy(base)
+        if angle != 0:
+            rot = transforms.RandomRotation(degrees=(angle, angle))
+            ds.transform = transforms.Compose([
+                ds.transform,
+                transforms.Lambda(lambda x, r=rot: r(x)),
+            ])
+        if capacity is not None and len(ds) < capacity:
+            ds = ConcatDataset([copy.deepcopy(ds) for _ in range(math.ceil(capacity / len(ds)))])
+        task_datasets.append(ds)
+    return task_datasets
+
+
 DATASET_CONFIGS = {
     'mnist': {'size': 32, 'channels': 1, 'classes': 10},
     'mnist-color': {'size': 32, 'channels': 3, 'classes': 10},
     'cifar10': {'size': 32, 'channels': 3, 'classes': 10},
     'cifar100': {'size': 32, 'channels': 3, 'classes': 100},
     'svhn': {'size': 32, 'channels': 3, 'classes': 10},
-
+    'rmnist': {'size': 32, 'channels': 1, 'classes': 10},
 }

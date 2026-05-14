@@ -3,7 +3,6 @@ import utils
 from tqdm import tqdm
 import torch
 from torch import nn
-from torch.autograd import Variable
 from torch.utils.data import ConcatDataset
 
 
@@ -64,14 +63,14 @@ class Solver(BatchTrainable):
         real_scores = self.forward(x)
         real_loss = self.criterion(real_scores, y)
         _, real_predicted = real_scores.max(1)
-        real_prec = (y == real_predicted).sum().data[0] / batch_size
+        real_prec = (y == real_predicted).sum().item() / batch_size
 
         # run the model on the replayed data.
         if x_ is not None and y_ is not None:
             replay_scores = self.forward(x_)
             replay_loss = self.criterion(replay_scores, y_)
             _, replay_predicted = replay_scores.max(1)
-            replay_prec = (y_ == replay_predicted).sum().data[0] / batch_size
+            replay_prec = (y_ == replay_predicted).sum().item() / batch_size
 
             # calculate joint loss of real data and replayed data.
             loss = (
@@ -85,7 +84,7 @@ class Solver(BatchTrainable):
 
         loss.backward()
         self.optimizer.step()
-        return {'loss': loss.data[0], 'precision': precision}
+        return {'loss': loss.item(), 'precision': precision}
 
     def set_optimizer(self, optimizer):
         self.optimizer = optimizer
@@ -179,8 +178,8 @@ class Scholar(GenerativeMixin, nn.Module):
 
             # sample the real training data.
             x, y = next(data_loader)
-            x = Variable(x).cuda() if cuda else Variable(x)
-            y = Variable(y).cuda() if cuda else Variable(y)
+            x = x.cuda() if cuda else x
+            y = y.cuda() if cuda else y
 
             # sample the replayed training data.
             if from_previous_datasets:
@@ -191,8 +190,8 @@ class Scholar(GenerativeMixin, nn.Module):
                 x_ = y_ = None
 
             if x_ is not None and y_ is not None:
-                x_ = Variable(x_).cuda() if cuda else Variable(x_)
-                y_ = Variable(y_).cuda() if cuda else Variable(y_)
+                x_ = x_.cuda() if cuda else x_
+                y_ = y_.cuda() if cuda else y_
 
             # train the model with a batch.
             result = trainable.train_a_batch(

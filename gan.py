@@ -1,3 +1,4 @@
+import torch
 from torch import nn
 from torch.nn import functional as F
 
@@ -81,4 +82,4 @@ class Generator(nn.Module):
         g = F.relu(self.bn2(self.deconv2(g)))
         g = F.relu(self.bn3(self.deconv3(g)))
         g = self.deconv4(g)
-        return F.sigmoid(g)
+        return torch.sigmoid(g)

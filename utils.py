@@ -3,7 +3,6 @@ import os.path
 import torchvision
 import torch
 from torch import nn
-from torch.autograd import Variable
 from torch.utils.data import DataLoader
 from torch.utils.data.dataloader import default_collate
 
@@ -73,13 +72,13 @@ def validate(model, dataset, test_size=1024,
         if total_tested >= test_size:
             break
         # test the model.
-        data = Variable(data).cuda() if cuda else Variable(data)
-        labels = Variable(labels).cuda() if cuda else Variable(labels)
+        data = data.cuda() if cuda else data
+        labels = labels.cuda() if cuda else labels
         scores = model(data)
         _, predicted = torch.max(scores, 1)
 
         # update statistics.
-        total_correct += (predicted == labels).sum().data[0]
+        total_correct += (predicted == labels).sum().item()
         total_tested += len(data)
 
     precision = total_correct / total_tested
@@ -94,9 +93,9 @@ def xavier_initialize(model):
 
     for p in parameters:
         if p.dim() >= 2:
-            nn.init.xavier_normal(p)
+            nn.init.xavier_normal_(p)
         else:
-            nn.init.constant(p, 0)
+            nn.init.constant_(p, 0)
 
 
 def gaussian_intiailize(model, std=.01):
@@ -105,9 +104,9 @@ def gaussian_intiailize(model, std=.01):
 
     for p in parameters:
         if p.dim() >= 2:
-            nn.init.normal(p, std=std)
+            nn.init.normal_(p, std=std)
         else:
-            nn.init.constant(p, 0)
+            nn.init.constant_(p, 0)
 
 
 class LambdaModule(nn.Module):

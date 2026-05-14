@@ -1,7 +1,6 @@
 from functools import reduce
 import torch
 from torch import nn, autograd
-from torch.autograd import Variable
 import gan
 import dgr
 import utils
@@ -82,7 +81,7 @@ class WGAN(dgr.Generator):
         g_loss.backward()
         self.generator_optimizer.step()
 
-        return {'c_loss': c_loss.data[0], 'g_loss': g_loss.data[0]}
+        return {'c_loss': c_loss.item(), 'g_loss': g_loss.item()}
 
     def sample(self, size):
         return self.generator(self._noise(size))
@@ -100,7 +99,7 @@ class WGAN(dgr.Generator):
         self.lamda = l
 
     def _noise(self, size):
-        z = Variable(torch.randn(size, self.z_size)) * .1
+        z = torch.randn(size, self.z_size) * .1
         return z.cuda() if self._is_on_cuda() else z
 
     def _c_loss(self, x, z, return_g=False):
@@ -128,7 +127,7 @@ class WGAN(dgr.Generator):
                 self.image_size,
                 self.image_size
             )
-        interpolated = Variable(a*x.data + (1-a)*g.data, requires_grad=True)
+        interpolated = (a * x.detach() + (1 - a) * g.detach()).requires_grad_(True)
         c = self.critic(interpolated)
         gradients = autograd.grad(
             c, interpolated, grad_outputs=(

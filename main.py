@@ -4,7 +4,7 @@ import os.path
 import numpy as np
 import torch
 import utils
-from data import get_dataset, DATASET_CONFIGS
+from data import get_dataset, get_rotated_mnist_tasks, DATASET_CONFIGS
 from train import train
 from dgr import Scholar
 from models import WGAN, CNN
@@ -16,7 +16,7 @@ parser = argparse.ArgumentParser(
 
 parser.add_argument(
     '--experiment', type=str,
-    choices=['permutated-mnist', 'svhn-mnist', 'mnist-svhn'],
+    choices=['permutated-mnist', 'svhn-mnist', 'mnist-svhn', 'rotated-mnist'],
     default='permutated-mnist'
 )
 parser.add_argument('--mnist-permutation-number', type=int, default=5)
@@ -35,8 +35,8 @@ parser.add_argument('--solver-reducing-layers', type=int, default=3)
 parser.add_argument('--solver-channel-size', type=int, default=1024)
 
 parser.add_argument('--generator-c-updates-per-g-update', type=int, default=5)
-parser.add_argument('--generator-iterations', type=int, default=3000)
-parser.add_argument('--solver-iterations', type=int, default=1000)
+parser.add_argument('--generator-iterations', type=int, default=8000)
+parser.add_argument('--solver-iterations', type=int, default=5000)
 parser.add_argument('--importance-of-new-task', type=float, default=.3)
 parser.add_argument('--lr', type=float, default=1e-04)
 parser.add_argument('--beta1', type=float, default=0.5)
@@ -71,7 +71,12 @@ if __name__ == '__main__':
         args.solver_iterations
     )
 
-    if experiment == 'permutated-mnist':
+    if experiment == 'rotated-mnist':
+        train_datasets = get_rotated_mnist_tasks(train=True,  capacity=capacity)
+        test_datasets  = get_rotated_mnist_tasks(train=False, capacity=capacity)
+        dataset_config = DATASET_CONFIGS['rmnist']
+
+    elif experiment == 'permutated-mnist':
         # generate permutations for the mnist classification tasks.
         np.random.seed(args.mnist_permutation_seed)
         permutations = [
