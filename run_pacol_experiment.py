@@ -60,6 +60,9 @@ CLS_ITERS       = 5000
 BATCH_SIZE      = 32
 LR              = 1e-4
 
+# MNIST test set size (used to cap evaluation; no need to expand test data)
+MNIST_TEST_SIZE = 10000
+
 
 def build_scholar(cuda):
     cfg = DATASET_CONFIGS['rmnist']
@@ -85,12 +88,16 @@ def build_scholar(cuda):
     return scholar
 
 
-def evaluate_all_tasks(solver, test_datasets, cuda, batch_size=256):
+def evaluate_all_tasks(solver, test_datasets, cuda):
     accs = []
     for ds in test_datasets:
-        acc = utils.validate(solver, ds, test_size=len(ds), cuda=cuda,
-                             verbose=False,
-                             collate_fn=utils.label_squeezing_collate_fn)
+        acc = utils.validate(
+            solver, ds,
+            test_size=MNIST_TEST_SIZE,   # cap at 10k; test_datasets may be capacity-expanded
+            cuda=cuda,
+            verbose=False,
+            collate_fn=utils.label_squeezing_collate_fn,
+        )
         accs.append(acc)
     return accs
 
@@ -154,7 +161,7 @@ def single_run(attack, ratio, train_datasets, test_datasets, seed):
         generator_iterations=GEN_ITERS,
         solver_iterations=CLS_ITERS,
         importance_of_new_task=0.5,   # used only for task 1 (dynamic takes over after)
-        dynamic_importance=True,      # Bug 5 fix: use r=1/τ schedule (DGR paper eq. 2)
+        dynamic_importance=True,      # use r=1/τ schedule (DGR paper eq. 2)
         batch_size=BATCH_SIZE,
         lr=LR, beta1=0.5, beta2=0.9,
         loss_log_interval=500,
@@ -174,8 +181,10 @@ def single_run(attack, ratio, train_datasets, test_datasets, seed):
 
 def run_experiment(attack, ratio, n_runs=3):
     capacity = BATCH_SIZE * max(GEN_ITERS, CLS_ITERS)
+    # Capacity padding is only needed for training (to keep DataLoader from
+    # exhausting the dataset mid-epoch). Test datasets use raw MNIST (10k each).
     train_datasets = get_rotated_mnist_tasks(train=True,  capacity=capacity)
-    test_datasets  = get_rotated_mnist_tasks(train=False, capacity=capacity)
+    test_datasets  = get_rotated_mnist_tasks(train=False, capacity=None)
 
     all_accs = []
     for run in range(n_runs):
@@ -183,7 +192,7 @@ def run_experiment(attack, ratio, n_runs=3):
         accs = single_run(attack, ratio, train_datasets, test_datasets, seed=run)
         all_accs.append(accs)
         row = ' | '.join(f'T{i+1}={a:.1%}' for i, a in enumerate(accs))
-        print(f'  {row}')
+        print(f'  {row}', flush=True)
 
     all_accs = np.array(all_accs) * 100
     means = all_accs.mean(axis=0)
