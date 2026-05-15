@@ -30,7 +30,7 @@ def pgd_step(
     tensors the valid range is dataset-specific and the ε-ball clip
     is sufficient.
     """
-    x_adv = x_adv.detach() + alpha * grad.sign()
+    x_adv = x_adv.detach() - alpha * grad.sign()
     # Project back into ε-ball
     x_adv = torch.max(torch.min(x_adv, x_orig + epsilon), x_orig - epsilon)
     # Optional clip to valid image range
