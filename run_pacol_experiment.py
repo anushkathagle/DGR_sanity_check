@@ -17,10 +17,11 @@ Paper settings (PACOL §4.3):
 
 Usage
 -----
-    python run_pacol_experiment.py --attack clean --runs 3
-    python run_pacol_experiment.py --attack white --ratio 0.03 --runs 3
-    python run_pacol_experiment.py --attack gray  --ratio 0.03 --runs 3
-    python run_pacol_experiment.py --attack black --ratio 0.03 --runs 3
+    python run_pacol_experiment.py --attack clean      --runs 3
+    python run_pacol_experiment.py --attack white      --ratio 0.03 --runs 1
+    python run_pacol_experiment.py --attack label_flip --ratio 0.03 --runs 1
+    python run_pacol_experiment.py --attack gray       --ratio 0.03 --runs 3
+    python run_pacol_experiment.py --attack black      --ratio 0.03 --runs 3
 """
 
 import argparse
@@ -114,7 +115,7 @@ def single_run(attack, ratio, train_datasets, test_datasets, seed):
     pacol_attacker = None
     target_dataset = train_datasets[TARGET_TASK_ID - 1]  # 0-indexed
 
-    if attack != 'clean':
+    if attack not in ('clean', 'label_flip'):
         aux_idx = np.random.default_rng(seed).choice(
             len(target_dataset), min(AUX_SIZE, len(target_dataset)), replace=False
         )
@@ -173,6 +174,8 @@ def single_run(attack, ratio, train_datasets, test_datasets, seed):
         target_dataset=target_dataset,
         nontarget_task_ids=NONTARGET_IDS if attack != 'clean' else None,
         poison_ratio=ratio,
+        attack_mode='label_flip' if attack == 'label_flip' else 'pacol',
+        num_classes=10,
         seed=seed,
     )
 
@@ -204,7 +207,8 @@ def run_experiment(attack, ratio, n_runs=3):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--attack',  default='clean', choices=['clean', 'white', 'gray', 'black'])
+    parser.add_argument('--attack',  default='clean',
+                        choices=['clean', 'white', 'gray', 'black', 'label_flip'])
     parser.add_argument('--ratio',   default=0.03, type=float)
     parser.add_argument('--runs',    default=3,    type=int)
     args = parser.parse_args()

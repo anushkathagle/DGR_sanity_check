@@ -6,6 +6,7 @@ from torch import optim
 from torch import nn
 import utils
 import visual
+from attacks.label_flip import create_label_flip_poison
 
 
 def train(scholar, train_datasets, test_datasets, replay_mode,
@@ -33,6 +34,8 @@ def train(scholar, train_datasets, test_datasets, replay_mode,
           target_dataset=None,
           nontarget_task_ids=None,
           poison_ratio=0.0,
+          attack_mode='pacol',
+          num_classes=10,
           seed=0):
     solver_criterion = nn.CrossEntropyLoss()
     solver_optimizer = optim.Adam(
@@ -64,24 +67,37 @@ def train(scholar, train_datasets, test_datasets, replay_mode,
         # DGR paper uses r = 1/τ; fall back to the fixed value when not requested.
         task_importance = (1.0 / task) if dynamic_importance else importance_of_new_task
 
-        # PACOL injection: poison non-target tasks before training
-        if pacol_attacker is not None and nontarget_task_ids and task in nontarget_task_ids:
-            # Bug 1 fix: sync attacker model to current CL solver state (θ_{τ+n−1}).
-            # The paper requires θ at the time of the attack, not the initial weights.
-            pacol_attacker.model_orig = copy.deepcopy(scholar.solver).to(pacol_attacker.device)
-
+        # Poison injection for non-target tasks
+        if nontarget_task_ids and task in nontarget_task_ids:
             n_poison = max(1, int(len(train_dataset) * poison_ratio))
             rng = np.random.default_rng(seed + task)
             nt_idx = rng.choice(len(train_dataset), n_poison, replace=False)
             nt_x = torch.stack([train_dataset[int(i)][0] for i in nt_idx])
             nt_y = torch.tensor([train_dataset[int(i)][1] for i in nt_idx])
-            print(f'  [task {task}] crafting {n_poison} poison samples...', flush=True)
-            adv_x = pacol_attacker.craft_poison(
-                target_dataset, nt_x, nt_y, seed=seed + task,
-                x_min=0.0, x_max=1.0,  # Bug 2 fix: clip to valid pixel range [0,1]
-            )
-            train_dataset = _inject_poison(train_dataset, adv_x, nt_idx)
-            print(f'  [task {task}] poison injected, training...', flush=True)
+
+            if attack_mode == 'label_flip':
+                # Control: inject label-flipped T1 images into non-target training.
+                # Tests whether DGR replay neutralizes any "forget T1" gradient
+                # signal, independent of gradient-matching quality.
+                print(f'  [task {task}] injecting {n_poison} label-flip poison (T1→T{task})...', flush=True)
+                adv_x, _ = create_label_flip_poison(
+                    target_dataset, n_poison=n_poison,
+                    num_classes=num_classes, seed=seed + task,
+                )
+                train_dataset = _inject_poison(train_dataset, adv_x, nt_idx)
+                print(f'  [task {task}] poison injected, training...', flush=True)
+
+            elif pacol_attacker is not None:
+                # Bug 1 fix: sync attacker model to current CL solver state (θ_{τ+n−1}).
+                # The paper requires θ at the time of the attack, not the initial weights.
+                pacol_attacker.model_orig = copy.deepcopy(scholar.solver).to(pacol_attacker.device)
+                print(f'  [task {task}] crafting {n_poison} PACOL poison samples...', flush=True)
+                adv_x = pacol_attacker.craft_poison(
+                    target_dataset, nt_x, nt_y, seed=seed + task,
+                    x_min=0.0, x_max=1.0,  # Bug 2 fix: clip to valid pixel range [0,1]
+                )
+                train_dataset = _inject_poison(train_dataset, adv_x, nt_idx)
+                print(f'  [task {task}] poison injected, training...', flush=True)
 
         generator_training_callbacks = [_generator_training_callback(
             loss_log_interval=loss_log_interval,

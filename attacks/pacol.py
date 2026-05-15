@@ -157,6 +157,7 @@ class PACOL:
         x_min:            float = None,
         x_max:            float = None,
         craft_batch_size: int   = 128,
+        verbose:          bool  = True,
     ) -> torch.Tensor:
         """
         Run Algorithm 1 and return adversarial inputs X^adv_{τ+n}.
@@ -197,6 +198,9 @@ class PACOL:
             grad_lf = _flat_grad(loss_lf, params, create_graph=False).detach()
 
             # ── Inner PGD: sweep all non-target mini-batches ───────────────
+            h_first_start = None   # H at PGD step 0 of first batch (for diag)
+            h_first_end   = None   # H at PGD step S-1 of first batch
+
             for batch_start in range(0, n, craft_batch_size):
                 batch_end = min(batch_start + craft_batch_size, n)
 
@@ -204,7 +208,7 @@ class PACOL:
                 xb_orig = x_orig[batch_start:batch_end].to(self.device)
                 yb_nt   = nontarget_y[batch_start:batch_end].to(self.device)
 
-                for _ in range(self.S):
+                for s in range(self.S):
                     xb_adv = xb_adv.detach().requires_grad_(True)
 
                     model.zero_grad()
@@ -217,6 +221,13 @@ class PACOL:
 
                     H      = self.dist_fn(grad_adv, grad_lf)
                     grad_X = torch.autograd.grad(H, xb_adv)[0]
+
+                    # Record H for first batch only (representative sample)
+                    if batch_start == 0:
+                        if s == 0:
+                            h_first_start = H.item()
+                        if s == self.S - 1:
+                            h_first_end = H.item()
 
                     with torch.no_grad():
                         xb_adv = pgd_step(xb_adv, xb_orig, grad_X,
@@ -234,6 +245,15 @@ class PACOL:
             loss_step = F.cross_entropy(model(xb_update.detach()), yb_update)
             loss_step.backward()
             opt.step()
+
+            if verbose and h_first_start is not None:
+                pert = (x_adv - x_orig).abs()
+                print(
+                    f'  [PACOL k={k+1:2d}/{self.K}] '
+                    f'H {h_first_start:.4f}→{h_first_end:.4f}  '
+                    f'pert max={pert.max():.4f} mean={pert.mean():.5f}',
+                    flush=True,
+                )
 
         return x_adv
 
