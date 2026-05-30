@@ -58,8 +58,11 @@ from attacks.pgd import pgd_step
 # ---------------------------------------------------------------------------
 
 def _l2_distance(p: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
-    """‖p − q‖²  (both vectors flattened)."""
-    return ((p - q) ** 2).sum()
+    # Scale-invariant L2: normalise both gradients before comparing so PGD
+    # cannot reduce H by shrinking ‖p‖ — only by rotating p toward q.
+    p_dir = p / (p.norm() + 1e-12)
+    q_dir = q / (q.norm() + 1e-12)
+    return ((p_dir - q_dir) ** 2).sum()
 
 
 def _neg_cosine(p: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
@@ -127,7 +130,7 @@ class PACOL:
         alpha:       float = None,
         distance:    str   = 'cosine',
         device:      torch.device = None,
-        lr:          float = 1e-4,
+        lr:          float = 1e-5,
     ):
         if distance not in _DIST_FNS:
             raise ValueError(f"distance must be one of {list(_DIST_FNS)}, got '{distance}'")
@@ -157,58 +160,56 @@ class PACOL:
         x_min:            float = None,
         x_max:            float = None,
         craft_batch_size: int   = 128,
-        verbose:          bool  = True,
     ) -> torch.Tensor:
         """
         Run Algorithm 1 and return adversarial inputs X^adv_{τ+n}.
 
-        Structure faithful to Algorithm 1:
-          - Target label-flip data is sampled once before the K outer loop.
-          - The K outer loop wraps the mini-batch iteration so the model
-            evolves exactly K times (one Adam step per outer iteration),
-            not K × num_batches times as in the old per-batch structure.
-          - Inner PGD sweeps all non-target mini-batches per outer iteration.
+        Processes nontarget samples in mini-batches of `craft_batch_size`.
+        Model and optimizer are re-initialised from self.model_orig for each
+        mini-batch so every batch starts from θ₀ = θ as Algorithm 1 requires.
         """
-        model  = copy.deepcopy(self.model_orig).to(self.device)
-        model.train()
-
-        x_orig = nontarget_x.clone()   # CPU; reference for ε-ball projection
+        x_orig = nontarget_x.clone()   # CPU; sliced per mini-batch
         x_adv  = nontarget_x.clone()   # output accumulator (CPU)
-
-        opt    = torch.optim.Adam(model.parameters(), lr=self.lr)
-        params = list(model.parameters())
         n      = len(nontarget_x)
 
-        # Sample target (label-flipped) data once — held fixed across all K steps.
-        # A batch of craft_batch_size samples gives a stable gradient signal.
-        n_target = min(craft_batch_size, len(target_data))
-        x_t, y_t_adv = create_label_flip_poison(
-            target_data,
-            n_poison=n_target,
-            num_classes=self.num_classes,
-            seed=seed,
-        )
-        x_t     = x_t.to(self.device)
-        y_t_adv = y_t_adv.to(self.device)
+        for batch_start in range(0, n, craft_batch_size):
+            batch_end = min(batch_start + craft_batch_size, n)
+            bs = batch_end - batch_start
 
-        for k in range(self.K):
-            # ── Label-flipped gradient (once per outer iteration) ──────────
-            model.zero_grad()
-            loss_lf = F.cross_entropy(model(x_t), y_t_adv)
-            grad_lf = _flat_grad(loss_lf, params, create_graph=False).detach()
+            # Re-initialise model and optimiser per batch (Algorithm 1: θ₀ = θ)
+            model  = copy.deepcopy(self.model_orig).to(self.device)
+            model.train()
+            opt    = torch.optim.Adam(model.parameters(), lr=self.lr)
+            params = list(model.parameters())
 
-            # ── Inner PGD: sweep all non-target mini-batches ───────────────
-            h_first_start = None   # H at PGD step 0 of first batch (for diag)
-            h_first_end   = None   # H at PGD step S-1 of first batch
+            xb_adv  = x_adv[batch_start:batch_end].to(self.device)
+            xb_orig = x_orig[batch_start:batch_end].to(self.device)
+            yb_nt   = nontarget_y[batch_start:batch_end].to(self.device)
 
-            for batch_start in range(0, n, craft_batch_size):
-                batch_end = min(batch_start + craft_batch_size, n)
+            x_t, y_t_adv = create_label_flip_poison(
+                target_data,
+                n_poison=bs,
+                num_classes=self.num_classes,
+                seed=seed + batch_start,
+            )
+            x_t     = x_t.to(self.device)
+            y_t_adv = y_t_adv.to(self.device)
 
-                xb_adv  = x_adv[batch_start:batch_end].to(self.device)
-                xb_orig = x_orig[batch_start:batch_end].to(self.device)
-                yb_nt   = nontarget_y[batch_start:batch_end].to(self.device)
+            H_first   = None
+            H_last    = None
+            cos_first = None
+            cos_last  = None
+            intra_k_deltas: list = []
+            cos_k_start = None
 
-                for s in range(self.S):
+            for k_iter in range(self.K):
+                # ── Label-flipped gradient ────────────────────────────────
+                model.zero_grad()
+                loss_lf = F.cross_entropy(model(x_t), y_t_adv)
+                grad_lf = _flat_grad(loss_lf, params, create_graph=False).detach()
+
+                # ── Inner PGD loop ────────────────────────────────────────
+                for s_iter in range(self.S):
                     xb_adv = xb_adv.detach().requires_grad_(True)
 
                     model.zero_grad()
@@ -222,38 +223,46 @@ class PACOL:
                     H      = self.dist_fn(grad_adv, grad_lf)
                     grad_X = torch.autograd.grad(H, xb_adv)[0]
 
-                    # Record H for first batch only (representative sample)
-                    if batch_start == 0:
-                        if s == 0:
-                            h_first_start = H.item()
-                        if s == self.S - 1:
-                            h_first_end = H.item()
+                    cos = float(F.cosine_similarity(
+                        grad_adv.detach().unsqueeze(0),
+                        grad_lf.unsqueeze(0),
+                    ).item())
+
+                    if k_iter == 0 and s_iter == 0:
+                        H_first   = float(H.detach().item())
+                        cos_first = cos
+
+                    if s_iter == 0:
+                        cos_k_start = cos
+                    if s_iter == self.S - 1 and cos_k_start is not None:
+                        intra_k_deltas.append(cos - cos_k_start)
+
+                    H_last   = float(H.detach().item())
+                    cos_last = cos
 
                     with torch.no_grad():
-                        xb_adv = pgd_step(xb_adv, xb_orig, grad_X,
+                        # H is a distance to MINIMISE; negate grad_X so
+                        # pgd_step's ascent (x + α·sign(g)) becomes descent.
+                        xb_adv = pgd_step(xb_adv, xb_orig, -grad_X,
                                           self.alpha, self.epsilon, x_min, x_max)
 
-                x_adv[batch_start:batch_end] = xb_adv.detach().cpu()
+                # ── Outer model update ────────────────────────────────────
+                opt.zero_grad()
+                loss_step = F.cross_entropy(model(xb_adv.detach()), yb_nt)
+                loss_step.backward()
+                opt.step()
 
-            # ── One model update per outer iteration (Algorithm 1 step 11) ─
-            # Uses the first mini-batch of the now-updated adversarial data.
-            mb_end = min(craft_batch_size, n)
-            xb_update = x_adv[:mb_end].to(self.device)
-            yb_update = nontarget_y[:mb_end].to(self.device)
+            delta     = (xb_adv.detach() - xb_orig).abs()
+            linf_mean = float(delta.max(dim=-1).values.max(dim=-1).values.max(dim=-1).values.mean())
+            l2_mean   = float(delta.reshape(bs, -1).norm(dim=1).mean())
+            mean_intra_k = (sum(intra_k_deltas) / len(intra_k_deltas)) if intra_k_deltas else 0.0
+            print(f'    [pacol] batch {batch_start//craft_batch_size}: '
+                  f'H {H_first:.4f}→{H_last:.4f}  ΔH={H_last - H_first:+.4f}  '
+                  f'cos {cos_first:+.4f}→{cos_last:+.4f}  Δcos={cos_last - cos_first:+.4f}  '
+                  f'Δcos_intra-k={mean_intra_k:+.4f}  '
+                  f'|δ|∞={linf_mean:.4f}  |δ|₂={l2_mean:.4f}', flush=True)
 
-            opt.zero_grad()
-            loss_step = F.cross_entropy(model(xb_update.detach()), yb_update)
-            loss_step.backward()
-            opt.step()
-
-            if verbose and h_first_start is not None:
-                pert = (x_adv - x_orig).abs()
-                print(
-                    f'  [PACOL k={k+1:2d}/{self.K}] '
-                    f'H {h_first_start:.4f}→{h_first_end:.4f}  '
-                    f'pert max={pert.max():.4f} mean={pert.mean():.5f}',
-                    flush=True,
-                )
+            x_adv[batch_start:batch_end] = xb_adv.detach().cpu()
 
         return x_adv
 
@@ -269,16 +278,12 @@ class PACOL:
         epsilon:      float,
         K: int, S: int, alpha: float, distance: str, device: torch.device,
     ) -> 'PACOL':
-        """
-        White-box: use the actual CL model.
-        Caller passes the real model; no surrogate needed.
-        """
         return cls(model, num_classes, epsilon, K, S, alpha, distance, device)
 
     @classmethod
     def gray_box(
         cls,
-        surrogate:    nn.Module,    # same arch, different init, pre-trained on aux data
+        surrogate:    nn.Module,
         num_classes:  int,
         epsilon:      float,
         K: int, S: int, alpha: float, distance: str, device: torch.device,
@@ -288,7 +293,7 @@ class PACOL:
     @classmethod
     def black_box(
         cls,
-        surrogate:    nn.Module,    # different arch, pre-trained on aux data
+        surrogate:    nn.Module,
         num_classes:  int,
         epsilon:      float,
         K: int, S: int, alpha: float, distance: str, device: torch.device,
@@ -308,10 +313,6 @@ def train_surrogate(
     lr:          float = 1e-4,
     batch_size:  int   = 128,
 ) -> nn.Module:
-    """
-    Train a surrogate model on auxiliary target-task data.
-    Used to set up gray-box and black-box attacks.
-    """
     from torch.utils.data import DataLoader
     loader = DataLoader(aux_dataset, batch_size=batch_size, shuffle=True)
     surrogate = surrogate.to(device).train()
