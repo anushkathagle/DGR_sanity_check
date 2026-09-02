@@ -39,6 +39,9 @@ import torchvision
 
 USE_DRIVE = False  # set True to read/write everything under Google Drive
 drive_base_path = '/content/drive/MyDrive/edm-cifar100'  # only used if USE_DRIVE
+# Paths below are quoted before being passed to shell magics, so spaces are
+# tolerated -- but note this path is unrelated to where the notebook file
+# itself lives; it's just where this script writes its own working files.
 
 BASE = drive_base_path if USE_DRIVE else '/content'
 os.makedirs(BASE, exist_ok=True)
@@ -60,9 +63,9 @@ BATCH = 128           # lower than the paper's default of 512 to fit a single
 print("Cloning NVlabs/edm repository...")
 edm_dir = os.path.join(BASE, 'edm')
 if not os.path.isdir(edm_dir):
-    !git clone https://github.com/NVlabs/edm.git {edm_dir}
+    !git clone https://github.com/NVlabs/edm.git "{edm_dir}"
 
-%cd {edm_dir}
+%cd "{edm_dir}"
 
 # ── 2. Install dependencies ─────────────────────────────────────────────
 print("Installing dependencies...")
@@ -88,7 +91,7 @@ print(f"CIFAR-100 training images saved to {raw_dir}")
 
 dataset_zip = os.path.join(BASE, 'datasets', 'cifar100-32x32.zip')
 print(f"Converting to EDM dataset format ({dataset_zip})...")
-!python dataset_tool.py --source={raw_dir} --dest={dataset_zip} --resolution=32x32
+!python dataset_tool.py --source="{raw_dir}" --dest="{dataset_zip}" --resolution=32x32
 
 # ── 4. Download the pretrained EDM CIFAR-10 checkpoint ─────────────────
 # NVIDIA's released checkpoints are .pkl (inference-ready network
@@ -98,7 +101,7 @@ checkpoints_dir = os.path.join(BASE, 'checkpoints')
 os.makedirs(checkpoints_dir, exist_ok=True)
 ckpt_name = 'edm-cifar10-32x32-cond-vp.pkl' if COND else 'edm-cifar10-32x32-uncond-vp.pkl'
 ckpt_path = os.path.join(checkpoints_dir, ckpt_name)
-!wget -nc https://nvlabs-fi-cdn.nvidia.com/edm/pretrained/{ckpt_name} -P {checkpoints_dir}
+!wget -nc https://nvlabs-fi-cdn.nvidia.com/edm/pretrained/{ckpt_name} -P "{checkpoints_dir}"
 
 # ── 5. Fine-tune the model ──────────────────────────────────────────────
 outdir = os.path.join(BASE, 'training-runs-cifar100')
@@ -113,10 +116,10 @@ print(f"  transferring weights from {ckpt_path}")
 # at the very end.
 train_cmd = (
     f'python train.py '
-    f'--outdir={outdir} '
-    f'--data={dataset_zip} '
+    f'--outdir="{outdir}" '
+    f'--data="{dataset_zip}" '
     f'--cond={"1" if COND else "0"} '
-    f'--transfer={ckpt_path} '
+    f'--transfer="{ckpt_path}" '
     f'--duration={DURATION_MIMG} '
     f'--batch={BATCH} '
     f'--tick=10 '
