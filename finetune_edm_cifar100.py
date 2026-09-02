@@ -12,8 +12,12 @@ from a plain shell; copy its body into one or more notebook cells instead.
 
 Set USE_DRIVE=True below to persist everything that's worth keeping (repo
 clone, prepared dataset zip, downloaded checkpoint, training runs/snapshots)
-to Google Drive instead of the ephemeral Colab disk; mount Drive yourself
-first with `from google.colab import drive; drive.mount('/content/drive')`.
+to Google Drive instead of the ephemeral Colab disk. Drive is mounted for
+you below -- IMPORTANT: nothing under BASE is created until *after* that
+mount succeeds, because creating '/content/drive/...' locally before Drive
+is mounted there makes Colab's drive.mount() refuse to mount ("Mountpoint
+must not already contain files"), since it now finds a non-empty local
+directory sitting at the mount point instead of an empty one.
 The raw 50k-PNG CIFAR-100 dump used only as scratch input to dataset_tool.py
 is deliberately kept on local disk even with USE_DRIVE=True -- writing tens
 of thousands of individual small files through Drive's FUSE mount is slow
@@ -55,7 +59,6 @@ drive_base_path = '/content/drive/MyDrive/edm-cifar100'  # only used if USE_DRIV
 # itself lives; it's just where this script writes its own working files.
 
 BASE = drive_base_path if USE_DRIVE else '/content'
-os.makedirs(BASE, exist_ok=True)
 
 COND = False  # unconditional fine-tuning (recommended, see module docstring).
 # Setting COND=True is possible but the label-embedding weights won't
@@ -69,6 +72,16 @@ DURATION_MIMG = 10   # fine-tuning budget, in millions of images (the paper's
 BATCH = 128           # lower than the paper's default of 512 to fit a single
                       # Colab GPU; reduce --tick/--snap proportionally if you
                       # raise DURATION_MIMG a lot
+
+# ── Mount Google Drive (must happen before BASE is created below) ──────────
+if USE_DRIVE:
+    from google.colab import drive
+    if not os.path.ismount('/content/drive'):
+        drive.mount('/content/drive')
+    else:
+        print("Google Drive is already mounted at /content/drive")
+
+os.makedirs(BASE, exist_ok=True)
 
 # ── 1. Clone the NVlabs/edm repository ─────────────────────────────────────
 print("Cloning NVlabs/edm repository...")
