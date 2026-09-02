@@ -9,10 +9,20 @@ embedding, CIFAR-100 has 100 classes).
 Meant to be pasted directly into a Colab cell -- it uses `!` / `%cd`
 IPython magics, so it is NOT valid to run as `python finetune_edm_cifar100.py`
 from a plain shell; copy its body into one or more notebook cells instead.
-Set USE_DRIVE=True below to persist everything (repo clone, dataset,
-checkpoints, training runs) to Google Drive instead of the ephemeral Colab
-disk; mount Drive yourself first with
-`from google.colab import drive; drive.mount('/content/drive')`.
+
+Set USE_DRIVE=True below to persist everything that's worth keeping (repo
+clone, prepared dataset zip, downloaded checkpoint, training runs/snapshots)
+to Google Drive instead of the ephemeral Colab disk; mount Drive yourself
+first with `from google.colab import drive; drive.mount('/content/drive')`.
+The raw 50k-PNG CIFAR-100 dump used only as scratch input to dataset_tool.py
+is deliberately kept on local disk even with USE_DRIVE=True -- writing tens
+of thousands of individual small files through Drive's FUSE mount is slow
+(can take a long time / time out), and that folder is fully disposable
+(regenerated from torchvision in under a minute).
+
+If a session dies mid-training, re-running the fine-tuning cell will pick
+up the latest training-state-*.pt under outdir on Drive automatically and
+--resume from there instead of restarting from the pretrained checkpoint.
 
 Corrects the following bugs found in a first draft of this setup:
   - `--cfg` and `--kimg` are not real NVlabs/edm train.py options (those
@@ -32,6 +42,7 @@ Corrects the following bugs found in a first draft of this setup:
     a zip) before train.py will accept them.
 """
 
+import glob
 import os
 import torchvision
 
@@ -77,21 +88,31 @@ print("Installing dependencies...")
 # image into a per-class subfolder (train/<label>/*.png), then convert
 # that folder into the zip archive train.py actually expects.
 print("Preparing CIFAR-100 dataset...")
-raw_dir = os.path.join(BASE, 'datasets', 'cifar100-raw', 'train')
+# Deliberately local, not under BASE: this is a disposable ~50k-small-file
+# scratch dump that's only consumed by dataset_tool.py below. Writing it to
+# Drive would be extremely slow; it costs nothing to regenerate locally.
+local_scratch = '/content/cifar100-scratch'
+raw_dir = os.path.join(local_scratch, 'train')
 os.makedirs(raw_dir, exist_ok=True)
 
-trainset = torchvision.datasets.CIFAR100(
-    root=os.path.join(BASE, 'data_temp'), train=True, download=True,
-)
-for i, (img, label) in enumerate(trainset):
-    class_dir = os.path.join(raw_dir, f'{label:03d}')
-    os.makedirs(class_dir, exist_ok=True)
-    img.save(os.path.join(class_dir, f'{i:05d}.png'))
-print(f"CIFAR-100 training images saved to {raw_dir}")
-
 dataset_zip = os.path.join(BASE, 'datasets', 'cifar100-32x32.zip')
-print(f"Converting to EDM dataset format ({dataset_zip})...")
-!python dataset_tool.py --source="{raw_dir}" --dest="{dataset_zip}" --resolution=32x32
+os.makedirs(os.path.dirname(dataset_zip), exist_ok=True)
+
+if os.path.isfile(dataset_zip):
+    # Already prepared and persisted (e.g. from a previous session on Drive)
+    print(f"Found existing prepared dataset at {dataset_zip}, skipping re-prep.")
+else:
+    trainset = torchvision.datasets.CIFAR100(
+        root=os.path.join(local_scratch, 'data_temp'), train=True, download=True,
+    )
+    for i, (img, label) in enumerate(trainset):
+        class_dir = os.path.join(raw_dir, f'{label:03d}')
+        os.makedirs(class_dir, exist_ok=True)
+        img.save(os.path.join(class_dir, f'{i:05d}.png'))
+    print(f"CIFAR-100 training images saved to {raw_dir}")
+
+    print(f"Converting to EDM dataset format ({dataset_zip})...")
+    !python dataset_tool.py --source="{raw_dir}" --dest="{dataset_zip}" --resolution=32x32
 
 # ── 4. Download the pretrained EDM CIFAR-10 checkpoint ─────────────────
 # NVIDIA's released checkpoints are .pkl (inference-ready network
@@ -105,21 +126,35 @@ ckpt_path = os.path.join(checkpoints_dir, ckpt_name)
 
 # ── 5. Fine-tune the model ──────────────────────────────────────────────
 outdir = os.path.join(BASE, 'training-runs-cifar100')
+os.makedirs(outdir, exist_ok=True)
+
+# If a previous run under outdir got interrupted (Colab disconnect, runtime
+# recycle, etc.), --dump periodically wrote a full training-state file
+# (optimizer + step count, not just weights) there. Pick the latest one and
+# --resume from it instead of --transfer-ing the pretrained checkpoint again
+# -- that's what actually avoids losing progress on session termination.
+resume_candidates = sorted(glob.glob(os.path.join(outdir, '*', 'training-state-*.pt')))
+resume_path = resume_candidates[-1] if resume_candidates else None
+
+if resume_path:
+    print(f"Found existing training state, resuming from {resume_path}")
+    weight_arg = f'--resume="{resume_path}"'
+else:
+    print(f"No existing training state found, transferring pretrained weights from {ckpt_path}")
+    weight_arg = f'--transfer="{ckpt_path}"'
+
 print("Starting fine-tuning...")
 print(f"  cond={COND}, duration={DURATION_MIMG}Mimg, batch={BATCH}")
-print(f"  transferring weights from {ckpt_path}")
 
-# --transfer loads pretrained network weights for fine-tuning (tolerant of
-# shape mismatches). --duration is in millions of images, not kimg.
-# --tick/--snap are scaled down from the (50, 50) defaults so a short
-# fine-tuning run still produces a handful of checkpoints instead of one
-# at the very end.
+# --duration is in millions of images, not kimg. --tick/--snap are scaled
+# down from the (50, 50) defaults so a short fine-tuning run still produces
+# a handful of checkpoints instead of one at the very end.
 train_cmd = (
     f'python train.py '
     f'--outdir="{outdir}" '
     f'--data="{dataset_zip}" '
     f'--cond={"1" if COND else "0"} '
-    f'--transfer="{ckpt_path}" '
+    f'{weight_arg} '
     f'--duration={DURATION_MIMG} '
     f'--batch={BATCH} '
     f'--tick=10 '
