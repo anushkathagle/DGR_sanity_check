@@ -92,8 +92,14 @@ if not os.path.isdir(edm_dir):
 %cd "{edm_dir}"
 
 # ── 2. Install dependencies ─────────────────────────────────────────────
+# The repo ships environment.yml (a conda spec), not a pip requirements.txt
+# -- `pip install -r environment.yml` fails trying to parse YAML as
+# requirements. Colab already has a CUDA-matched torch/numpy/pillow/scipy,
+# so we deliberately don't force environment.yml's pinned torch==1.12.1
+# (that would fight the preinstalled CUDA build for no benefit); just
+# pip-install the packages Colab doesn't already provide.
 print("Installing dependencies...")
-!pip install -r requirements.txt
+!pip install "numpy>=1.20" "click>=8.0" "pillow>=8.3.1" "scipy>=1.7.1" psutil requests tqdm imageio "imageio-ffmpeg>=0.4.3" pyspng
 
 # ── 3. Prepare the CIFAR-100 dataset ────────────────────────────────────
 # dataset_tool.py only derives labels from a dataset.json or from
