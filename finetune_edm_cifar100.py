@@ -69,9 +69,18 @@ COND = False  # unconditional fine-tuning (recommended, see module docstring).
 DURATION_MIMG = 10   # fine-tuning budget, in millions of images (the paper's
                       # from-scratch CIFAR-10 run used 200; fine-tuning needs
                       # nowhere near that)
-BATCH = 128           # lower than the paper's default of 512 to fit a single
-                      # Colab GPU; reduce --tick/--snap proportionally if you
-                      # raise DURATION_MIMG a lot
+BATCH = 128           # effective/logical batch size (affects training dynamics,
+                      # e.g. the EMA halflife schedule) -- lower than the paper's
+                      # default of 512, but this alone does NOT bound GPU memory;
+                      # reduce --tick/--snap proportionally if you raise
+                      # DURATION_MIMG a lot
+BATCH_GPU = 32        # actual per-step minibatch size; train.py accumulates
+                      # gradients over BATCH // BATCH_GPU steps to reach BATCH,
+                      # so this is what actually controls peak GPU memory. A
+                      # single-GPU Colab run with no --batch-gpu processes all
+                      # of BATCH in one forward/backward pass, which OOMs on a
+                      # ~15GB GPU (T4) at BATCH=128 for this architecture; drop
+                      # this further (16, 8, ...) if you still hit OOM
 
 # ── Mount Google Drive (must happen before BASE is created below) ──────────
 if USE_DRIVE:
@@ -179,7 +188,7 @@ else:
     weight_arg = f'--transfer="{ckpt_path}"'
 
 print("Starting fine-tuning...")
-print(f"  cond={COND}, duration={DURATION_MIMG}Mimg, batch={BATCH}")
+print(f"  cond={COND}, duration={DURATION_MIMG}Mimg, batch={BATCH}, batch_gpu={BATCH_GPU}")
 
 # --duration is in millions of images, not kimg. --tick/--snap are scaled
 # down from the (50, 50) defaults so a short fine-tuning run still produces
@@ -194,6 +203,7 @@ train_cmd = (
     f'{weight_arg} '
     f'--duration={DURATION_MIMG} '
     f'--batch={BATCH} '
+    f'--batch-gpu={BATCH_GPU} '
     f'--tick=10 '
     f'--snap=10 '
     f'--dump=10'
