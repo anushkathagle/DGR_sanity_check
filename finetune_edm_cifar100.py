@@ -149,6 +149,9 @@ def _patch_file(rel_path, old, new, description):
     path = os.path.join(edm_dir, rel_path)
     with open(path) as f:
         src = f.read()
+    if old not in src:
+        print(f"WARNING: expected text not found in {rel_path}, skipping patch: {description}")
+        return
     patched = src.replace(old, new)
     if patched != src:
         with open(path, 'w') as f:
@@ -190,6 +193,24 @@ _patch_file(
     "data = torch.load(resume_state_dump, map_location=torch.device('cpu'))",
     "data = torch.load(resume_state_dump, map_location=torch.device('cpu'), weights_only=False)",
     "load training-state checkpoints with weights_only=False for PyTorch 2.6+",
+)
+
+# 4) train.py's Logger duplicates *every single print()* to a log.txt under
+# run_dir, flushing on every write since should_flush=True. Since run_dir
+# is under outdir (on Drive when USE_DRIVE=True), this means any Drive
+# hiccup -- at any point during the whole run, not just at checkpoint
+# writes -- crashes the process immediately with
+# "OSError: [Errno 107] Transport endpoint is not connected", as seen
+# crashing on the very first print (the network summary table) before any
+# training even started. Point the log file at local disk instead; it's
+# just a human-readable log, not something that needs Drive persistence
+# (checkpoints/snapshots are still written to Drive separately, on their
+# own controlled schedule).
+_patch_file(
+    'train.py',
+    "os.path.join(c.run_dir, 'log.txt')",
+    "f'/content/edm-log-{os.path.basename(c.run_dir)}.txt'",
+    "write the stdout log locally instead of through the Drive mount",
 )
 
 # ── 2. Install dependencies ─────────────────────────────────────────────
