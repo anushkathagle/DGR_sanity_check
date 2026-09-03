@@ -259,5 +259,19 @@ train_cmd = (
 )
 !{train_cmd}
 
-print("\nFine-tuning finished. Network snapshots (.pkl) are under:")
-print(f"  {outdir}")
+# Don't just assume success -- check train.py's actual exit code (IPython
+# sets the special _exit_code var after every `!` command) and confirm a
+# snapshot really landed on Drive, rather than printing "finished"
+# unconditionally regardless of what happened.
+snapshots = sorted(glob.glob(os.path.join(outdir, '*', 'network-snapshot-*.pkl')))
+if _exit_code != 0:
+    print(f"\n*** train.py exited with code {_exit_code} -- it did NOT complete successfully. ***")
+    if snapshots:
+        print(f"Latest snapshot checkpointed on Drive before the failure: {snapshots[-1]}")
+        print("Re-run this cell to resume training from there.")
+    else:
+        print("No snapshot was checkpointed yet -- re-running this cell will restart from the pretrained checkpoint.")
+elif snapshots:
+    print(f"\nTraining completed. Final network snapshot saved to Drive:\n  {snapshots[-1]}")
+else:
+    print("\ntrain.py exited cleanly but no network-snapshot-*.pkl was found under outdir -- this is unexpected, check the run's log.txt.")
