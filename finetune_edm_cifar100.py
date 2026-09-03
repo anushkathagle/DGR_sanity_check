@@ -82,6 +82,19 @@ BATCH = 128           # effective/logical batch size (affects training dynamics,
                       # default of 512, but this alone does NOT bound GPU memory;
                       # reduce --tick/--snap proportionally if you raise
                       # DURATION_MIMG a lot
+
+TICK_KIMG = 10   # images (in thousands) per tick -- just a progress/logging unit
+SNAP_TICKS = 2   # write a network-snapshot-*.pkl every SNAP_TICKS * TICK_KIMG
+                 # images (currently 20k)
+DUMP_TICKS = 2   # write a training-state-*.pt (what --resume needs) every
+                 # DUMP_TICKS * TICK_KIMG images (currently 20k). This is your
+                 # worst-case progress loss on a disconnect -- tightened from
+                 # the (10, 10) defaults (100k-image loss window) after losing
+                 # a real run's progress to a disconnect that landed before the
+                 # first checkpoint ever got written. Lower further (e.g. 1) if
+                 # disconnects keep happening well inside this window; each
+                 # dump costs some Drive I/O time and space, so don't go
+                 # extreme without reason
 BATCH_GPU = 32        # actual per-step minibatch size; train.py accumulates
                       # gradients over BATCH // BATCH_GPU steps to reach BATCH,
                       # so this is what actually controls peak GPU memory. A
@@ -239,11 +252,9 @@ else:
 print("Starting fine-tuning...")
 print(f"  cond={COND}, duration={DURATION_MIMG}Mimg, batch={BATCH}, batch_gpu={BATCH_GPU}")
 
-# --duration is in millions of images, not kimg. --tick/--snap are scaled
-# down from the (50, 50) defaults so a short fine-tuning run still produces
-# a handful of checkpoints instead of one at the very end. There's no
-# --metrics flag on this train.py -- FID/metric computation lives in the
-# separate fid.py script, run manually against a snapshot after training.
+# --duration is in millions of images, not kimg. There's no --metrics flag
+# on this train.py -- FID/metric computation lives in the separate fid.py
+# script, run manually against a snapshot after training.
 train_cmd = (
     f'python train.py '
     f'--outdir="{outdir}" '
@@ -253,9 +264,9 @@ train_cmd = (
     f'--duration={DURATION_MIMG} '
     f'--batch={BATCH} '
     f'--batch-gpu={BATCH_GPU} '
-    f'--tick=10 '
-    f'--snap=10 '
-    f'--dump=10'
+    f'--tick={TICK_KIMG} '
+    f'--snap={SNAP_TICKS} '
+    f'--dump={DUMP_TICKS}'
 )
 !{train_cmd}
 
