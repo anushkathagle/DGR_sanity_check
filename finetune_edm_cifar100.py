@@ -167,7 +167,9 @@ print(f"  cond={COND}, duration={DURATION_MIMG}Mimg, batch={BATCH}")
 
 # --duration is in millions of images, not kimg. --tick/--snap are scaled
 # down from the (50, 50) defaults so a short fine-tuning run still produces
-# a handful of checkpoints instead of one at the very end.
+# a handful of checkpoints instead of one at the very end. There's no
+# --metrics flag on this train.py -- FID/metric computation lives in the
+# separate fid.py script, run manually against a snapshot after training.
 train_cmd = (
     f'python train.py '
     f'--outdir="{outdir}" '
@@ -178,8 +180,7 @@ train_cmd = (
     f'--batch={BATCH} '
     f'--tick=10 '
     f'--snap=10 '
-    f'--dump=10 '
-    f'--metrics=none'
+    f'--dump=10'
 )
 !{train_cmd}
 
