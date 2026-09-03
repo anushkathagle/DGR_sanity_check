@@ -83,12 +83,24 @@ BATCH_GPU = 32        # actual per-step minibatch size; train.py accumulates
                       # this further (16, 8, ...) if you still hit OOM
 
 # ── Mount Google Drive (must happen before BASE is created below) ──────────
+# os.path.ismount() only checks that /content/drive is a distinct mount
+# point -- it stays True even if the underlying Drive FUSE connection has
+# gone stale (e.g. after a network hiccup or long idle period), which then
+# fails every file access with "[Errno 107] Transport endpoint is not
+# connected". Actually probe it with a real read and force a remount if
+# that fails, instead of trusting ismount() alone.
 if USE_DRIVE:
     from google.colab import drive
-    if not os.path.ismount('/content/drive'):
-        drive.mount('/content/drive')
-    else:
-        print("Google Drive is already mounted at /content/drive")
+    needs_mount = True
+    if os.path.ismount('/content/drive'):
+        try:
+            os.listdir('/content/drive/MyDrive')
+            needs_mount = False
+            print("Google Drive is already mounted and responsive at /content/drive")
+        except OSError:
+            print("Google Drive mount is stale (not responding) -- remounting...")
+    if needs_mount:
+        drive.mount('/content/drive', force_remount=True)
 
 os.makedirs(BASE, exist_ok=True)
 
