@@ -19,7 +19,7 @@ mounted there makes Colab's drive.mount() refuse to mount ("Mountpoint
 must not already contain files"), since it now finds a non-empty local
 directory sitting at the mount point instead of an empty one.
 
-Two things are deliberately kept on local disk even with USE_DRIVE=True:
+Three things are deliberately kept on local disk even with USE_DRIVE=True:
 - The cloned edm repo itself: we `%cd` into it, so if it lived on Drive,
   any Drive hiccup during a multi-hour training run (mount drop, network
   blip) would take the shell's own cwd down with it -- "getcwd: cannot
@@ -31,6 +31,15 @@ Two things are deliberately kept on local disk even with USE_DRIVE=True:
   through Drive's FUSE mount is slow (can take a long time / time out),
   and that folder is fully disposable (regenerated from torchvision in
   under a minute).
+- The dataset zip actually passed to train.py's --data: DataLoader worker
+  processes read from it continuously throughout training (once per image,
+  until its in-memory cache is warm -- which resets to cold on every
+  resumed run, since it's a fresh process). Reading that live from Drive
+  means every resume re-exposes ~50k individual Drive reads right when a
+  session has just reconnected, which is exactly when we've seen crashes
+  cluster (FileNotFoundError / stale-mount errors reading the zip
+  mid-training). The canonical zip stays on Drive (prepared once); we just
+  copy it to local disk each session and train against that copy.
 
 If a session dies mid-training, re-running the fine-tuning cell will pick
 up the latest training-state-*.pt under outdir on Drive automatically and
@@ -56,6 +65,7 @@ Corrects the following bugs found in a first draft of this setup:
 
 import glob
 import os
+import shutil
 import torchvision
 
 # ── Configuration ────────────────────────────────────────────────────────
@@ -255,6 +265,14 @@ else:
     print(f"Converting to EDM dataset format ({dataset_zip})...")
     !python dataset_tool.py --source="{raw_dir}" --dest="{dataset_zip}" --resolution=32x32
 
+# Copy to local disk for actual training use -- see module docstring for why
+# --data shouldn't point at the Drive copy directly. dataset_zip itself
+# (on Drive) remains the persisted, canonical copy.
+local_dataset_zip = '/content/cifar100-32x32.zip'
+if not os.path.isfile(local_dataset_zip):
+    print(f"Copying dataset to local disk for training ({local_dataset_zip})...")
+    shutil.copy(dataset_zip, local_dataset_zip)
+
 # ── 4. Download the pretrained EDM CIFAR-10 checkpoint ─────────────────
 # NVIDIA's released checkpoints are .pkl (inference-ready network
 # pickles), not .pt.
@@ -293,7 +311,7 @@ print(f"  cond={COND}, duration={DURATION_MIMG}Mimg, batch={BATCH}, batch_gpu={B
 train_cmd = (
     f'python train.py '
     f'--outdir="{outdir}" '
-    f'--data="{dataset_zip}" '
+    f'--data="{local_dataset_zip}" '
     f'--cond={"1" if COND else "0"} '
     f'{weight_arg} '
     f'--duration={DURATION_MIMG} '
@@ -320,4 +338,4 @@ if _exit_code != 0:
 elif snapshots:
     print(f"\nTraining completed. Final network snapshot saved to Drive:\n  {snapshots[-1]}")
 else:
-    print("\ntrain.py exited cleanly but no network-snapshot-*.pkl was found under outdir -- this is unexpected, check the run's log.txt.")
+    print("\ntrain.py exited cleanly but no network-snapshot-*.pkl was found under outdir -- this is unexpected, check the run's local log (/content/edm-log-*.txt).")
