@@ -91,6 +91,22 @@ if not os.path.isdir(edm_dir):
 
 %cd "{edm_dir}"
 
+# EDM (2022) was written against torch's old torch.utils.data.Sampler,
+# whose __init__ took a `data_source` arg. Modern PyTorch's Sampler no
+# longer accepts (or defines) that argument, so InfiniteSampler's
+# `super().__init__(dataset)` call raises
+# "TypeError: object.__init__() takes exactly one argument". Patch it to
+# the current no-arg signature; str.replace is a no-op on repeat runs
+# (e.g. if edm_dir is being reused from a previous session on Drive).
+misc_py = os.path.join(edm_dir, 'torch_utils', 'misc.py')
+with open(misc_py) as f:
+    _misc_src = f.read()
+_misc_patched = _misc_src.replace('super().__init__(dataset)', 'super().__init__()')
+if _misc_patched != _misc_src:
+    with open(misc_py, 'w') as f:
+        f.write(_misc_patched)
+    print("Patched torch_utils/misc.py: InfiniteSampler for modern PyTorch's Sampler.__init__()")
+
 # ── 2. Install dependencies ─────────────────────────────────────────────
 # The repo ships environment.yml (a conda spec), not a pip requirements.txt
 # -- `pip install -r environment.yml` fails trying to parse YAML as
