@@ -178,6 +178,20 @@ _patch_file(
     "fall back to gloo backend when NCCL isn't compiled in",
 )
 
+# 3) PyTorch 2.6 changed torch.load()'s default from weights_only=False to
+# weights_only=True. --resume's training-state-*.pt contains pickled
+# custom objects (e.g. torch_utils.persistence._reconstruct_persistent_obj)
+# that trip the new default's unpickling restriction, raising
+# "Weights only load failed ... WeightsUnpickler error: Unsupported
+# global". This is EDM's own file (written by this same script's earlier
+# run), not an untrusted download, so weights_only=False is safe here.
+_patch_file(
+    'training/training_loop.py',
+    "data = torch.load(resume_state_dump, map_location=torch.device('cpu'))",
+    "data = torch.load(resume_state_dump, map_location=torch.device('cpu'), weights_only=False)",
+    "load training-state checkpoints with weights_only=False for PyTorch 2.6+",
+)
+
 # ── 2. Install dependencies ─────────────────────────────────────────────
 # The repo ships environment.yml (a conda spec), not a pip requirements.txt
 # -- `pip install -r environment.yml` fails trying to parse YAML as
