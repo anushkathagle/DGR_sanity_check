@@ -100,21 +100,43 @@ if not os.path.isdir(edm_dir):
 
 %cd "{edm_dir}"
 
-# EDM (2022) was written against torch's old torch.utils.data.Sampler,
-# whose __init__ took a `data_source` arg. Modern PyTorch's Sampler no
-# longer accepts (or defines) that argument, so InfiniteSampler's
-# `super().__init__(dataset)` call raises
-# "TypeError: object.__init__() takes exactly one argument". Patch it to
-# the current no-arg signature; str.replace is a no-op on repeat runs
-# (e.g. if edm_dir is being reused from a previous session on Drive).
-misc_py = os.path.join(edm_dir, 'torch_utils', 'misc.py')
-with open(misc_py) as f:
-    _misc_src = f.read()
-_misc_patched = _misc_src.replace('super().__init__(dataset)', 'super().__init__()')
-if _misc_patched != _misc_src:
-    with open(misc_py, 'w') as f:
-        f.write(_misc_patched)
-    print("Patched torch_utils/misc.py: InfiniteSampler for modern PyTorch's Sampler.__init__()")
+# EDM (2022) predates several current-PyTorch/single-GPU-Colab realities.
+# Patch the affected lines in the cloned repo; str.replace is a no-op on
+# repeat runs (e.g. if edm_dir is being reused from a previous session on
+# Drive), so this is safe to run every time regardless of whether the repo
+# was just cloned or already existed.
+def _patch_file(rel_path, old, new, description):
+    path = os.path.join(edm_dir, rel_path)
+    with open(path) as f:
+        src = f.read()
+    patched = src.replace(old, new)
+    if patched != src:
+        with open(path, 'w') as f:
+            f.write(patched)
+        print(f"Patched {rel_path}: {description}")
+
+# 1) torch.utils.data.Sampler's __init__ used to take a `data_source` arg;
+# modern PyTorch's no longer does, so InfiniteSampler's
+# `super().__init__(dataset)` raises "TypeError: object.__init__() takes
+# exactly one argument".
+_patch_file(
+    'torch_utils/misc.py',
+    'super().__init__(dataset)', 'super().__init__()',
+    "InfiniteSampler for modern PyTorch's Sampler.__init__()",
+)
+
+# 2) dist.init() hardcodes backend='nccl' on any non-Windows OS, even
+# though we only ever run a single process (no torchrun/multi-GPU) where
+# gloo works identically. This avoids "RuntimeError: Distributed package
+# doesn't have NCCL built in" on any torch build without NCCL compiled in
+# (e.g. a CPU-only build, if the runtime doesn't actually have a GPU
+# attached -- check with !nvidia-smi if you hit this).
+_patch_file(
+    'torch_utils/distributed.py',
+    "backend = 'gloo' if os.name == 'nt' else 'nccl'",
+    "backend = 'gloo' if os.name == 'nt' or not torch.distributed.is_nccl_available() else 'nccl'",
+    "fall back to gloo backend when NCCL isn't compiled in",
+)
 
 # ── 2. Install dependencies ─────────────────────────────────────────────
 # The repo ships environment.yml (a conda spec), not a pip requirements.txt
