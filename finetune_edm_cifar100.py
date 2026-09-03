@@ -10,19 +10,27 @@ Meant to be pasted directly into a Colab cell -- it uses `!` / `%cd`
 IPython magics, so it is NOT valid to run as `python finetune_edm_cifar100.py`
 from a plain shell; copy its body into one or more notebook cells instead.
 
-USE_DRIVE=True below persists everything that's worth keeping (repo clone,
-prepared dataset zip, downloaded checkpoint, training runs/snapshots) to
-Google Drive instead of the ephemeral Colab disk. Drive is mounted for
-you below -- IMPORTANT: nothing under BASE is created until *after* that
-mount succeeds, because creating '/content/drive/...' locally before Drive
-is mounted there makes Colab's drive.mount() refuse to mount ("Mountpoint
+USE_DRIVE=True below persists everything that's worth keeping (prepared
+dataset zip, downloaded checkpoint, training runs/snapshots) to Google
+Drive instead of the ephemeral Colab disk. Drive is mounted for you below
+-- IMPORTANT: nothing under BASE is created until *after* that mount
+succeeds, because creating '/content/drive/...' locally before Drive is
+mounted there makes Colab's drive.mount() refuse to mount ("Mountpoint
 must not already contain files"), since it now finds a non-empty local
 directory sitting at the mount point instead of an empty one.
-The raw 50k-PNG CIFAR-100 dump used only as scratch input to dataset_tool.py
-is deliberately kept on local disk even with USE_DRIVE=True -- writing tens
-of thousands of individual small files through Drive's FUSE mount is slow
-(can take a long time / time out), and that folder is fully disposable
-(regenerated from torchvision in under a minute).
+
+Two things are deliberately kept on local disk even with USE_DRIVE=True:
+- The cloned edm repo itself: we `%cd` into it, so if it lived on Drive,
+  any Drive hiccup during a multi-hour training run (mount drop, network
+  blip) would take the shell's own cwd down with it -- "getcwd: cannot
+  access parent directories: Transport endpoint is not connected" -- not
+  just a file read. Re-cloning is a few seconds' work each session and
+  gains nothing from persistence.
+- The raw 50k-PNG CIFAR-100 dump used only as scratch input to
+  dataset_tool.py -- writing tens of thousands of individual small files
+  through Drive's FUSE mount is slow (can take a long time / time out),
+  and that folder is fully disposable (regenerated from torchvision in
+  under a minute).
 
 If a session dies mid-training, re-running the fine-tuning cell will pick
 up the latest training-state-*.pt under outdir on Drive automatically and
@@ -105,8 +113,15 @@ if USE_DRIVE:
 os.makedirs(BASE, exist_ok=True)
 
 # ── 1. Clone the NVlabs/edm repository ─────────────────────────────────────
+# Deliberately local, not under BASE, even with USE_DRIVE=True: this is
+# where we `%cd`, so if it lived on Drive, any Drive hiccup during training
+# (mount drop, network blip) would take down the shell's own cwd along with
+# it -- "getcwd: cannot access parent directories: Transport endpoint is
+# not connected" -- not just a file read. The clone itself is a few
+# seconds' work and gains nothing from persistence; only the
+# dataset/checkpoint/training-run *data* below actually needs Drive.
 print("Cloning NVlabs/edm repository...")
-edm_dir = os.path.join(BASE, 'edm')
+edm_dir = '/content/edm'
 if not os.path.isdir(edm_dir):
     !git clone https://github.com/NVlabs/edm.git "{edm_dir}"
 
