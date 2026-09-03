@@ -10,9 +10,9 @@ Meant to be pasted directly into a Colab cell -- it uses `!` / `%cd`
 IPython magics, so it is NOT valid to run as `python finetune_edm_cifar100.py`
 from a plain shell; copy its body into one or more notebook cells instead.
 
-Set USE_DRIVE=True below to persist everything that's worth keeping (repo
-clone, prepared dataset zip, downloaded checkpoint, training runs/snapshots)
-to Google Drive instead of the ephemeral Colab disk. Drive is mounted for
+USE_DRIVE=True below persists everything that's worth keeping (repo clone,
+prepared dataset zip, downloaded checkpoint, training runs/snapshots) to
+Google Drive instead of the ephemeral Colab disk. Drive is mounted for
 you below -- IMPORTANT: nothing under BASE is created until *after* that
 mount succeeds, because creating '/content/drive/...' locally before Drive
 is mounted there makes Colab's drive.mount() refuse to mount ("Mountpoint
@@ -52,8 +52,8 @@ import torchvision
 
 # ── Configuration ────────────────────────────────────────────────────────
 
-USE_DRIVE = False  # set True to read/write everything under Google Drive
-drive_base_path = '/content/drive/MyDrive/edm-cifar100'  # only used if USE_DRIVE
+USE_DRIVE = True  # read/write everything under Google Drive
+drive_base_path = '/content/drive/MyDrive/FineTunedCheckpoint/edm-cifar100'  # only used if USE_DRIVE
 # Paths below are quoted before being passed to shell magics, so spaces are
 # tolerated -- but note this path is unrelated to where the notebook file
 # itself lives; it's just where this script writes its own working files.
