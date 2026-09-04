@@ -339,3 +339,37 @@ elif snapshots:
     print(f"\nTraining completed. Final network snapshot saved to Drive:\n  {snapshots[-1]}")
 else:
     print("\ntrain.py exited cleanly but no network-snapshot-*.pkl was found under outdir -- this is unexpected, check the run's local log (/content/edm-log-*.txt).")
+
+# ── 6. Clean up old checkpoints (optional, run manually on demand) ─────────
+# --resume only ever needs the single most recent training-state-*.pt /
+# network-snapshot-*.pkl pair (matching numbers, in the same run
+# subfolder) -- everything older, across every numbered run folder under
+# outdir (each --resume writes a NEW folder, not into the old one), is
+# disposable. NOT run automatically: deleting checkpoints should be a
+# deliberate choice, not something that silently happens mid-training.
+# Paste this into its own cell and call cleanup_old_checkpoints(outdir)
+# whenever Drive storage gets tight; keep=2 keeps one extra pair as a
+# safety margin against a corrupted/partial most-recent write.
+import re
+
+def cleanup_old_checkpoints(outdir, keep=2, dry_run=False):
+    def kimg_of(path):
+        m = re.search(r'-(\d+)\.pt$', path)
+        return int(m.group(1)) if m else -1
+
+    pt_files = sorted(glob.glob(os.path.join(outdir, '*', 'training-state-*.pt')), key=kimg_of)
+    to_delete = pt_files[:-keep] if keep > 0 else pt_files
+    freed = 0
+    for pt_path in to_delete:
+        run_dir = os.path.dirname(pt_path)
+        pkl_path = os.path.join(run_dir, f'network-snapshot-{kimg_of(pt_path):06d}.pkl')
+        for path in (pt_path, pkl_path):
+            if os.path.isfile(path):
+                freed += os.path.getsize(path)
+                print(('Would delete' if dry_run else 'Deleting'), path)
+                if not dry_run:
+                    os.remove(path)
+    print(f"{'Would free' if dry_run else 'Freed'} {freed / 1e9:.2f} GB")
+
+# Example: cleanup_old_checkpoints(outdir, keep=2, dry_run=True)  # preview first
+
