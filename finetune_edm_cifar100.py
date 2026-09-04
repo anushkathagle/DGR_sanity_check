@@ -94,17 +94,14 @@ BATCH = 128           # effective/logical batch size (affects training dynamics,
                       # DURATION_MIMG a lot
 
 TICK_KIMG = 10   # images (in thousands) per tick -- just a progress/logging unit
-SNAP_TICKS = 2   # write a network-snapshot-*.pkl every SNAP_TICKS * TICK_KIMG
-                 # images (currently 20k)
-DUMP_TICKS = 2   # write a training-state-*.pt (what --resume needs) every
-                 # DUMP_TICKS * TICK_KIMG images (currently 20k). This is your
-                 # worst-case progress loss on a disconnect -- tightened from
-                 # the (10, 10) defaults (100k-image loss window) after losing
-                 # a real run's progress to a disconnect that landed before the
-                 # first checkpoint ever got written. Lower further (e.g. 1) if
-                 # disconnects keep happening well inside this window; each
-                 # dump costs some Drive I/O time and space, so don't go
-                 # extreme without reason
+SNAP_TICKS = 5   # write a network-snapshot-*.pkl every SNAP_TICKS * TICK_KIMG
+                 # images (currently 50k)
+DUMP_TICKS = 5   # write a training-state-*.pt (what --resume needs) every
+                 # DUMP_TICKS * TICK_KIMG images (currently 50k). This is your
+                 # worst-case progress loss on a disconnect -- eased back up
+                 # from (2, 2) to cut down on checkpoint volume/Drive storage;
+                 # lower again if disconnects keep landing well inside this
+                 # window, or raise further if storage is still tight.
 BATCH_GPU = 32        # actual per-step minibatch size; train.py accumulates
                       # gradients over BATCH // BATCH_GPU steps to reach BATCH,
                       # so this is what actually controls peak GPU memory. A
